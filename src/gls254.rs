@@ -292,20 +292,11 @@ impl Point {
         let (X1, S1, Z1, T1) = (&self.X, &self.S, &self.Z, &self.T);
         let (X2, S2, Z2, T2) = (&rhs.X, &rhs.S, &rhs.Z, &rhs.T);
 
-        // Formulas from eprint.iacr.org/2022/1325, figure 1.
-        //  X1X2 = X1*X2
-        //  S1S2 = S1*S2
-        //  Z1Z2 = Z1*Z2
-        //  T1T2 = T1*T2
-        //     D = (S1 + T1)*(S2 + T2)
-        //     E = aa*T1T2      # aa == a^2
-        //     F = X1X2**2
-        //     G = Z1Z2**2
-        //    X3 = D + S1S2
-        //    S3 = sqrt_b*(G*(S1S2 + E) + F*(D + E))
-        //    Z3 = sqrt_b*(F + G)
-        //    T3 = X3*Z3
-        // cost: 8M+2S
+        // This is similar to set_add() except that:
+        //   X1 = \sqrt{b}*X1
+        //   Z1 = \sqrt{b}*Z1
+        //   the output is (X, S, Z) without the T coordinate.
+        // cost: 7M+2S+2Mb
         let X1X2 = X1 * X2;
         let S1S2 = S1 * S2;
         let Z1Z2 = Z1 * Z2;
@@ -317,7 +308,7 @@ impl Point {
         let X3 = (D + S1S2).mul_sb();
         let S3 = (G * (S1S2 + E) + F * (D + E)).mul_sb();
         let Z3 = F + G;
-        //let T3 = X3 * Z3;
+        //let T3 = X3 * Z3; Remove this calculation.
         self.X = X3;
         self.S = S3;
         self.Z = Z3;
@@ -376,7 +367,11 @@ impl Point {
         // This is similar to set_add() except that:
         //   Z2 = 1
         //   T2 = X2
-        // cost: 7M+2S
+        // This is similar to set_add_affine() except that:
+        //   X1 = \sqrt{b}*X1
+        //   Z1 = \sqrt{b}*Z1
+        //   the output is (X, S, Z) without the T coordinate.
+        // cost: 6M+2S+2Mb
         let (X1, S1, Z1, T1) = (&self.X, &self.S, &self.Z, &self.T);
         let (X2, S2) = (&rhs.scaled_x, &rhs.scaled_s);
 
@@ -390,37 +385,11 @@ impl Point {
         let X3 = (D + S1S2).mul_sb();
         let S3 = (G * (S1S2 + E) + F * (D + E)).mul_sb();
         let Z3 = F + G;
-        //let T3 = X3 * Z3;
+        //let T3 = X3 * Z3; Remove this calculation.
         self.X = X3;
         self.S = S3;
         self.Z = Z3;
-        //self.T = T3;
-    }
-
-    #[inline(always)]
-    fn set_add_affine_withb_toJaco_c01(&mut self, rhs: &PointAffine) {
-        // This is similar to set_add() except that:
-        //   Z2 = 1
-        //   T2 = X2
-        // cost: 7M+2S
-        let (X1, S1, Z1, T1) = (&self.X, &self.S, &self.Z, &self.T);
-        let (X2, S2) = (&rhs.scaled_x, &rhs.scaled_s);
-
-        let X1X2 = X1 * X2;
-        let S1S2 = S1 * S2;
-        let T1T2 = T1 * X2;
-        let D = (S1 + T1) * (S2 + X2);
-        let E = T1T2.mul_u();         // a
-        let F = X1X2.square();
-        let G = Z1.square();
-        let X3 = (D + S1S2).mul_sb();
-        let S3 = (G * (S1S2 + E) + F * (D + E)).mul_sb();
-        let Z3 = F + G;
-        //let T3 = X3 * Z3;
-        self.X = X3;
-        self.S = S3;
-        self.Z = Z3;
-        //self.T = T3;
+        //self.T = T3; Remove this calculation.
     }
 
     /// Specialized point addition and subtraction routine. This returns
@@ -543,49 +512,6 @@ impl Point {
          Self { X: X4, S: S4, Z: Z4, T: GFb254::ZERO })
     }
 
-    /// Specialized point addition and subtraction routine when the other
-    /// operand is in affine coordinates. This returns self + rhs and
-    /// self - rhs more efficiently than doing both operations separately.
-    /// Moreover, the two returned points have the same Z coordinate.
-    /// The output is (X3, S3, Z3) without the T3 coordinate, and
-    /// the output is (X4, S4, Z4) without the T4 coordinate.
-    #[allow(dead_code)]
-    fn add_sub_affine_toJaco_c01(self, rhs: &PointAffine) -> (Self, Self) {
-        // Starting from set_add_affine(), we also compute self - rhs, with:
-        //   (-rhs).scaled_s = rhs.scaled_s + rhs.scaled_x.
-        // Reduce two multiplications for the computation of the T3 and T4 
-        // coordinates.
-        // cost: 9M+2S
-        let (X1, S1, Z1, T1) = (&self.X, &self.S, &self.Z, &self.T);
-        let (X2, S2) = (&rhs.scaled_x, &rhs.scaled_s);
-
-        let X1X2 = X1 * X2;
-        let S1S2 = S1 * S2;
-        // sub: S1S2' = S1*S2 + S1*X2 = S1S2 + S1*X2
-        let T1T2 = T1 * X2;
-        let D = (S1 + T1) * (S2 + X2);
-        // sub: D' = (S1 + T1)*S2 = D + S1*X2 + T1*X2 = D + S1*X2 + T1T2
-        let E = T1T2.mul_u();
-        let F = X1X2.square();
-        let G = Z1.square();
-        let X3 = D + S1S2;
-        // sub: X4 = D' + S1S2' = X3 + T1T2
-        let S3 = (G * (S1S2 + E) + F * (D + E)).mul_sb();
-        // sub: S4 = (G*(S1S2' + E) + F*(D' + E))*sqrt(b)
-        //         = S3 + (G*S1*X2 + F*S1*X2 + F*T1T2)*sqrt(b)
-        //         = S3 + X2*((F + G)*S1 + F*T1)*sqrt(b)
-        let Z3 = (F + G).mul_sb();
-        // sub: Z4 = Z3
-        // let T3 = X3 * Z3; Remove this calculation.
-        // sub: T4 = X4*Z4 = X3 + T1T2*Z3
-        let X4 = X3 + T1T2;
-        let S4 = S3 + X2 * ((F + G) * S1 + F * T1).mul_sb();
-        let Z4 = Z3;
-        // let T4 = X4 * Z4; Remove this calculation.
-        (Self { X: X3, S: S3, Z: Z3, T: GFb254::ZERO },
-         Self { X: X4, S: S4, Z: Z4, T: GFb254::ZERO })
-    }
-
     /// Specialized point addition routine when both operands are in
     /// affine coordinates.
     fn add_affine_affine(P1: &PointAffine, P2: &PointAffine) -> Self {
@@ -674,9 +600,11 @@ impl Point {
     /// Specialized point doubling and tripling routine when the operand is
     /// in affine coordaintes. This returns `2*P` and `3*P`; this is a bit
     /// cheaper than using `double_affine()` and `triple_affine()` separately.
+    /// The output is (X2, S2, Z2, T2), and
+    /// the output is (X3, S3, Z3) without the T3 coordinate.
     #[allow(dead_code)]
     fn double_and_triple_affine_toJaco(P: &PointAffine) -> (Self, Self) {
-        // cost: 7M+5S
+        // cost: 6M+5S
         let (X, S) = (&P.scaled_x, &P.scaled_s);
         let D = X.square();
         let E = D.square();
@@ -691,7 +619,7 @@ impl Point {
         let X3 = G + J;
         let Z3 = F + H;
         let S3 = Z3 * (S * (D + F) + J) + H * X3;
-        // let T3 = X3 * Z3;
+        // let T3 = X3 * Z3; Remove this calculation.
         (Self { X: X2, S: S2, Z: Z2, T: T2 },
          Self { X: X3, S: S3, Z: Z3, T: GFb254::ZERO })
     }
@@ -788,54 +716,6 @@ impl Point {
         Self { X: X3, S: S3, Z: Z3, T: GFb254::ZERO}
     }
 
-    /// Specialized point addition routine when adding an affine point P
-    /// to zeta(P).
-    /// The output is (X, S, Z) without the T coordinate.
-    /// Note: the Z coordinate of the output point is in GF(2^127).
-    #[allow(dead_code)]
-    fn add_affine_selfzeta_toJaco_c01(P: &PointAffine, neg: u32) -> Self {
-        // This is similar to set_add_affine_affine() except that:
-        //   X2 = phi(X1)
-        //   S2 = phi(S1) + (u + 1)*phi(X1)
-        // If neg != 0, we also negate the point afterwards.
-        // For a value v = v0 + u*v1:
-        //    phi(v) = v0 + v1 + u*v1
-        //    v*phi(v) = v0^2 + v1^2 + v0*v1   \in GF(2^127)
-        //    v + phi(v) = v0                  \in GF(2^127)
-        //    v + u*phi(v) = v1 + u*v0
-        // We decompose:
-        //    X1 = x0 + u*x1
-        //    S1 = s0 + u*s1
-        // Then:
-        //    X2 = (x0 + x1) + u*x1
-        //    S2 = (s0 + s1 + x0) + u*(s1 + x0 + x1)
-        // Reduce a multiplication for the computation of the T coordinates.
-        // cost: 4M+1S - savings
-        // (savings:
-        //    X1*X2 is X1*phi(X1), which is slightly less expensive
-        //    F = X1X2^2 is now computed over GF(2^127)
-        //    (D + E)*F is now a multiplication by an element of GF(2^127)
-        //    X3*Z3 is now a multiplication by an element of GF(2^127))
-        let (x0, x1) = P.scaled_x.to_components();
-        let (s0, s1) = P.scaled_s.to_components();
-        let X2 = GFb254::from_b127(x0 + x1, x1);
-        let mut S2 = GFb254::from_b127(s0 + s1 + x0, s1 + x0 + x1);
-        S2.set_cond(&(S2 + X2), neg);
-
-        let X1X2f = (x0 + x1).square() + x0 * x1;
-        let S1S2 = P.scaled_s * S2;
-        let D = GFb254::from_b127(s0 + x0, s1 + x1) * (S2 + X2);
-        let E = GFb254::from_b127(GFb127::ZERO, X1X2f); // a * X1X2f
-        let Ff = X1X2f.square();
-        let X3 = D + S1S2;
-        let S3 = (S1S2 + E + (D + E).mul_b127(&Ff)).mul_sb();
-        let Z3f = Ff.mul_sb() + &Self::SB_GF127;
-        let Z3 = GFb254::from_b127(Z3f, GFb127::ZERO);
-        // let T3 = X3.mul_b127(&Z3f); Remove this calculation.
-        Self { X: X3, S: S3, Z: Z3, T: GFb254::ZERO}
-    }
-
-
     /// Adds zeta(self) to self. If neg != 0, this uses -zeta(self) instead.
     /// Note: the Z coordinate of the output point is in GF(2^127).
     #[allow(dead_code)]
@@ -912,45 +792,6 @@ impl Point {
         // self.T = T3; Remove this calculation.
     }
 
-    /// Adds zeta(self) to self. If neg != 0, this uses -zeta(self) instead.
-    /// The output is (X, S, Z) without the T coordinate.
-    /// Note: the Z coordinate of the output point is in GF(2^127).
-    #[allow(dead_code)]
-    fn set_add_selfzeta_toJaco_c01(&mut self, neg: u32) {
-        let (X1, S1, Z1, T1) = (&self.X, &self.S, &self.Z, &self.T);
-        let rhs = self.zeta(neg);
-        let (S2, T2) = (&rhs.S, &rhs.T);
-
-        // Based on set_add(), with the additional rules:
-        //    X2 = phi(X1)                   = x0 + x1 + u*x1
-        //    S2 = phi(S1) + (u + 1)*phi(T1) = s0 + s1 + t0 + u*(s1 + t0 + t1)
-        //    Z2 = phi(Z1)                   = z0 + z1 + u*z1
-        //    T2 = phi(T1)                   = t0 + t1 + u*t1
-        // This simplifies some of the operations below.
-        // Reduce a multiplication for the computation of the T coordinates.
-        // cost: 7M+2S - savings:
-        //    X1*X2, Z1*Z2 and T1*T2 become mul_selfphi() calls
-        //    F = X1X2^2 and G = Z1Z2^2 are over GF(2^127)
-        //    multiplications by F, G and Z3 are mixed
-        let X1X2f = X1.mul_selfphi();
-        let S1S2 = S1 * S2;
-        let Z1Z2f = Z1.mul_selfphi();
-        let T1T2f = T1.mul_selfphi();
-        let D = (S1 + T1) * (S2 + T2);
-        let E = GFb254::from_b127(GFb127::ZERO, T1T2f); // a * T1T2f
-        let Ff = X1X2f.square();
-        let Gf = Z1Z2f.square();
-        let X3 = D + S1S2;
-        let S3 = ((S1S2 + E).mul_b127(&Gf) + (D + E).mul_b127(&Ff)).mul_sb();
-        let Z3f = (Ff + Gf).mul_sb();
-        let Z3 = GFb254::from_b127(Z3f, GFb127::ZERO);
-        // let T3 = X3.mul_b127(&Z3f); Remove this calculation.
-        self.X = X3;
-        self.S = S3;
-        self.Z = Z3;
-        // self.T = T3; Remove this calculation.
-    }
-
     /// Specialized point addition and subtraction routine when both
     /// operands are in affine coordinates. This returns P1 + P2 and
     /// P1 - P2 more efficiently than doing both operations separately.
@@ -994,7 +835,7 @@ impl Point {
     {
         // Starting from add_affine_affine(), we also compute P1 - P2 with:
         //   (-P2).scaled_s = P2.scaled_s + P2.scaled_x.
-        // cost: 8M+1S
+        // cost: 6M+1S
         let (X1, S1) = (&P1.scaled_x, &P1.scaled_s);
         let (X2, S2) = (&P2.scaled_x, &P2.scaled_s);
 
@@ -1011,8 +852,8 @@ impl Point {
         let S4 = (S1S2 + S1X2 + E + F * (S1S2 + S2X1 + E)).mul_sb();
         let Z3 = F.mul_sb() + &Self::SB;
         let Z4 = Z3;
-        // let T3 = X3 * Z3;
-        // let T4 = X4 * Z4;
+        // let T3 = X3 * Z3; Remove this calculation.
+        // let T4 = X4 * Z4; Remove this calculation.
         (Self { X: X3, S: S3, Z: Z3, T: GFb254::ZERO },
          Self { X: X4, S: S4, Z: Z4, T: GFb254::ZERO })
     }
@@ -1088,8 +929,7 @@ impl Point {
         //  Xp = sqrt_b*F
         //  Zp = D + a*F
         //  Sp = sqrt_b*(E*(E + Zp + F) + (D + sqrt_b*Xp)**2)
-        //  Tp = Xp*Zp
-        // cost: 3M+4S
+        // cost: 2M+4S
         let H = S + T.mul_u();
         let J = H + T;
         let D = H * J;
@@ -1098,7 +938,7 @@ impl Point {
         let Xp = F.mul_sb();
         let Zp = D + F.mul_u();
         let Sp = (E * (E + Zp + F) + (D + Xp.mul_sb()).square()).mul_sb();
-        // let Tp = Xp * Zp;
+        // let Tp = Xp * Zp; Remove this calculation.
         Self { X: Xp, S: Sp, Z: Zp, T: GFb254::ZERO }
     }
 
@@ -1252,94 +1092,6 @@ impl Point {
         Self { X: X3, S: S3, Z: Z3, T: T3 }
     }
 
-    #[cfg(feature = "gls254bench")]
-    #[inline(always)]
-    fn xdouble_affine_withb_c0(n: u32, rhs: &PointAffine) -> Self {
-        let (X1, S1) = (&rhs.scaled_x, &rhs.scaled_s);
-        
-        let mut X = X1.mul_sb();
-        let mut T = X;
-        X = X.square();
-        let mut Y = S1.mul_sb() + X; //
-
-        let D = X + &Self::B;
-        let mut Z = X;
-        X = D.square();
-        let E = Y + T + D;
-        T = X * Z;
-        let F = Z.mul_u();
-        Z = Z.mul_sb();
-        Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-
-        for _ in 0..(n-2) {
-            let D = (X + Z).square();
-            Z = T.square();
-            X = D.square();
-            let E = Y + T + D;
-            T = X * Z;
-            Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            Z = Z.mul_sb();
-        }
-
-        let D = (X + Z).square();
-        Z = T.square();
-        X = D.square();
-        let E = Y + T + D;
-        let F = Z.mul_b();
-        Y = (Y * E + Z.mul_u() + F + X).square();
-
-        let X3 = F;
-        let Z3 = X.mul_sb();
-        let T3 = Z * Z3;
-        let S3 = Y.mul_sb() + T3.mul_u1(); //
-
-        Self { X: X3, S: S3, Z: Z3, T: T3 }
-    }
-
-    #[cfg(feature = "gls254bench")]
-    #[inline(always)]
-    fn xdouble_affine_withb_c1(n: u32, rhs: &PointAffine) -> Self {
-        let (X1, S1) = (&rhs.scaled_x, &rhs.scaled_s);
-        
-        let mut X = X1.mul_sb();
-        let mut T = X;
-        X = X.square();
-        let mut Y = S1.mul_sb() + X + T; //
-
-        let D = X + &Self::B;
-        let mut Z = X;
-        X = D.square();
-        let E = Y + T + D;
-        T = X * Z;
-        let F = Z.mul_u();
-        Z = Z.mul_sb();
-        Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-
-        for _ in 0..(n-2) {
-            let D = (X + Z).square();
-            Z = T.square();
-            X = D.square();
-            let E = Y + T + D;
-            T = X * Z;
-            Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            Z = Z.mul_sb();
-        }
-
-        let D = (X + Z).square();
-        Z = T.square();
-        X = D.square();
-        let E = Y + T + D;
-        let F = Z.mul_b();
-        Y = (Y * E + Z.mul_u() + F + X).square();
-
-        let X3 = F;
-        let Z3 = X.mul_sb();
-        let T3 = Z * Z3;
-        let S3 = Y.mul_sb() + T3.mul_u(); //
-
-        Self { X: X3, S: S3, Z: Z3, T: T3 }
-    }
-
     /// Doubles this point n times (in place) then add an affine point.
     #[cfg(feature = "gls254bench")]
     #[inline(always)]
@@ -1444,8 +1196,6 @@ impl Point {
         let F = Z.mul_u();
         Z = Z.mul_sb();
         Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        // Z = Z.mul_sb();
 
         for _ in 0..(n-2) {
             let D = (X + Z).square();
@@ -1456,8 +1206,6 @@ impl Point {
             let F = Z.mul_u();
             Z = Z.mul_sb();
             Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-            // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            // Z = Z.mul_sb();
         }
 
         let D = (X + Z).square();
@@ -1505,8 +1253,6 @@ impl Point {
         let F = Z.mul_u();
         Z = Z.mul_sb();
         Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        // Z = Z.mul_sb();
 
         for _ in 0..(n-2) {
             let D = (X + Z).square();
@@ -1517,25 +1263,9 @@ impl Point {
             let F = Z.mul_u();
             Z = Z.mul_sb();
             Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-            // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            // Z = Z.mul_sb();
         }
 
         let D = (X + Z).square();
-
-        // for _ in 0..(n-1) {
-        //     Z = T.square();
-        //     X = D.square();
-        //     let E = Y + T + D;
-        //     T = X * Z;
-        //     let F = Z.mul_u();
-        //     Z = Z.mul_sb();
-        //     Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        //     // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        //     // Z = Z.mul_sb();
-        //     D = (X + Z).square();
-        // }
-
         Z = T.square();
         X = D.square();
         let E = Y + T + D;
@@ -1579,8 +1309,6 @@ impl Point {
         let F = Z.mul_u();
         Z = Z.mul_sb();
         Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        // Z = Z.mul_sb();
 
         for _ in 0..(n-2) {
             let D = (X + Z).square();
@@ -1591,8 +1319,6 @@ impl Point {
             let F = Z.mul_u();
             Z = Z.mul_sb();
             Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-            // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            // Z = Z.mul_sb();
         }
 
         let D = (X + Z).square();
@@ -1639,8 +1365,6 @@ impl Point {
         let F = Z.mul_u();
         Z = Z.mul_sb();
         Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        // Z = Z.mul_sb();
 
         for _ in 0..(n-2) {
             let D = (X + Z).square();
@@ -1651,8 +1375,6 @@ impl Point {
             let F = Z.mul_u();
             Z = Z.mul_sb();
             Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-            // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            // Z = Z.mul_sb();
         }
 
         let D = (X + Z).square();
@@ -1700,8 +1422,6 @@ impl Point {
         let F = Z.mul_u();
         Z = Z.mul_sb();
         Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-        // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-        // Z = Z.mul_sb();
 
         for _ in 0..(n-2) {
             let D = (X + Z).square();
@@ -1712,8 +1432,6 @@ impl Point {
             let F = Z.mul_u();
             Z = Z.mul_sb();
             Y = (Y * E + F + Z.mul_sb()).square() + T.mul_u1();
-            // Y = (Y * E + Z.mul_u() + Z.mul_b()).square() + T.mul_u1();
-            // Z = Z.mul_sb();
         }
 
         let D = (X + Z).square();
@@ -4404,438 +4122,6 @@ impl Point {
                 &lookup_2dt(&win, nz, sd0[i], sd1[i]));
         }
         Q.set_add_affine_withb_toJaco(&lookup_2dt(&win, nz, sd0[0], sd1[0]));
-
-        let Qa = Q.to_affine_fromJaco();
-        let mut qq = [0u8; 64];
-        qq[..32].copy_from_slice(&Qa.scaled_x.encode());
-        qq[32..].copy_from_slice(&Qa.scaled_s.encode());
-        Some(qq)
-    }
-
-    /// This function is defined only for benchmarking purposes. It
-    /// implements a kind of ECDH key exchange, with the following
-    /// characteristics:
-    ///
-    ///  - Input point `pp` is a raw, uncompressed point (64 bytes).
-    ///  - Output is the resulting point, also uncompressed; no hashing
-    ///    is performed.
-    ///  - Scalar `sk` is provided encoded over 32 bytes.
-    ///  - Input point is not considered secret (only the scalar).
-    ///
-    /// For a proper key exchange, with compressed points and extra
-    /// hashing to get an unbiased output cryptographically bounded to
-    /// the source points, and constant-time processing so that even the
-    /// input point can be secret, use `PrivateKey::ECDH()`.
-    ///
-    /// This function uses a two-dimensional lookup table, and processes
-    /// scalar bits in groups of 2.
-    /// This function is an version of for_benchmarks_only_2dt_2.
-    #[cfg(feature = "gls254bench")]
-    pub fn for_benchmarks_only_AD_2dt_2_c0(pp: &[u8], sk: &[u8]) -> Option<[u8; 64]> {
-        // Decode the input point in scaled affine coordinates; fail if
-        // the decoding fails (invalid representation of field elements)
-        // or if the resulting point is not on the curve, or is not in
-        // the proper group (the points P+N, for P \in E[r]).
-
-        // x and s must decode as field elements.
-        if pp.len() != 64 {
-            return None;
-        }
-        let px = GFb254::decode(&pp[..32])?;
-        let ps = GFb254::decode(&pp[32..])?;
-
-        // Curve equation: s^2 + x*s = (x^2 + sqrt(a)*x + b)^2
-        // Our (x,s) values are scaled by 1/sqrt(b), so we must first
-        // "unscale" them.
-        let ux = px.mul_sb();
-        let us = ps.mul_sb();
-        // sqrt(a) = a + 1
-        let uv = (us + ux.square() + ux.mul_u1() + Self::B).square() + us*ux;
-        if uv.iszero() == 0 {
-            return None;
-        }
-
-        // Points P+N are the points with Tr(x) != Tr(a). We must use the
-        // unscaled x coordinate.
-        if ux.trace() != 0 {
-            return None;
-        }
-
-        let mut P = PointAffine { scaled_x: px, scaled_s: ps };
-        let n = Scalar::decode(sk)?;
-
-        // We follow here the "2DT" method described in:
-        //   https://eprint.iacr.org/2022/748
-        // It is slightly modified here, in the following ways:
-        //  - We use (x,s) coordinates and complete formulas, so we do
-        //    not have to make special provisions for a neutral input
-        //    or the last iteration; we simply do not have any exceptional
-        //    case to care about.
-        //  - The scalar splitting is a bit different; the split_mu_inner()
-        //    function returns the optimal solution (no off-by-1) and we
-        //    ensure odd integers in the output by simply modifying the
-        //    input scalar, and adjusting the result (see split_mu_odd()).
-
-        // Split the scalar into odd integers (128 bits + sign).
-        let (n0, s0, n1, s1) = Self::split_mu_odd(&n);
-
-        // The scalar n was split into n0 and n1, with n = n0 + n1*mu.
-        // We have abs(n0) and abs(n1) into the `n0` and `n1` variables;
-        // we will conditionally negatd the source operand point, and also
-        // the output of zeta(), so as to take into account the signs
-        // of n0 and n1, and avoid any further sign handling. Thus, we do
-        // the following:
-        //   If s0 < 0 then we negate the base point (self).
-        //   All applications of zeta really are zeta(nz), with nz = s0 XOR s1.
-        P.set_condneg(s0);
-        let nz = s0 ^ s1;
-
-        // Compute the 2D table:
-        //   P + zeta(P)
-        //   3*P + zeta(P)
-        //   P + zeta(3*P)
-        //   3*P + zeta(3*P)
-        // The values in the table should be (X, S, Z) instead of (X, S, Z, T)
-        // in order to reduce the computational cost associated with T.
-        // This is because T is not necessary when converting to affine:
-        //   iZ = 1/Z^2
-        //   X = T * iZ
-        //   S = S * iZ
-        // ->
-        //   iZ = 1/Z
-        //   X = X * iZ
-        //   S = S * iZ^2
-        // The application of zeta should be done after the conversion to affine 
-        // coordinates.
-        let zP = P.zeta(nz);
-        let P3 = Self::triple_affine(&P);
-        let Q0 = Self::add_affine_selfzeta_toJaco_c01(&P, nz);
-        let (Q1, Q2) = P3.add_sub_affine_toJaco_c01(&zP);
-        let mut Q3 = P3;
-        Q3.set_add_selfzeta_toJaco_c01(nz);
-
-        // Normalize the table to affine.
-        // Note:
-        //   Q0.Z and Q3.Z are in GF(2^127)
-        //   Q2.Z = phi(Q1.Z)  (add_sub_affine() + zeta() on Q2)
-        // The values in the table should be (X, S, Z) instead of (X, S, Z, T)
-        // in order to reduce the computational cost associated with T.
-        // This is because T is not necessary when converting to affine:
-        //   iZ = 1/Z^2
-        //   X = T * iZ
-        //   S = S * iZ
-        // ->
-        //   iZ = 1/Z
-        //   X = X * iZ
-        //   S = S * iZ^2
-        // The application of zeta should be done after the conversion to affine 
-        // coordinates.
-        // The computational cost is the same except for the operations involving 
-        // the T coordinate (i.e., X * Z).
-        let mut win = [GFb254::ZERO; 8];
-        let (q0z, _) = Q0.Z.to_components();
-        let (q3z, _) = Q3.Z.to_components();
-        let sav1 = q0z * q3z;
-        let mut z = Q1.Z.mul_b127(&sav1);
-        z.set_invert();
-        let iZ = z.mul_b127(&sav1);
-        let iZZ = iZ.square();
-        z *= Q1.Z;
-        win[2] = Q1.X * iZ;
-        win[3] = Q1.S * iZZ;
-        let mut Q2 = PointAffine { scaled_x: Q2.X * iZ, scaled_s: Q2.S * iZZ};
-        Q2.set_zeta(nz);
-        win[4] = Q2.scaled_x;
-        win[5] = Q2.scaled_s;
-        let (zf, _) = z.to_components();
-        let iz = zf * q0z;
-        let izz = iz.square();
-        win[6] = Q3.X.mul_b127(&iz);
-        win[7] = Q3.S.mul_b127(&izz);
-        let iz = zf * q3z;
-        let izz = iz.square();
-        win[0] = Q0.X.mul_b127(&iz);
-        win[1] = Q0.S.mul_b127(&izz);
-
-        // The window contains 4 points:
-        //   win[4*j + i] = (2*i+1)*P + (2*j+1)*zeta(P)
-        // (Each point is two coordinates: scaled affine representation.)
-        // In other words, win[] contains all points e*P + f*zeta(P) for
-        // e and f in {1, 3}.
-        //
-        // This function returns i*P + j*zeta(P) for i and j both in
-        // {-3, -1, +1, +3}. The sign adjustments leverage
-        // the fact that zeta^2 = -1, i.e.:
-        //   zeta(e*P + f*zeta(P)) = -f*P + e*zeta(P)
-        // If neg is 0xFFFFFFFF, then '-zeta' is used instead of 'zeta' in
-        // all of the above.
-        #[inline(always)]
-        fn lookup_2dt(win: &[GFb254; 8], neg: u32, i: i8, j: i8)
-            -> PointAffine
-        {
-            // We have two conditional operations:
-            //   swap: swap i and j (before the lookup), apply zeta on output
-            //   neg:  negate the output
-            // The lookup itself uses |i| and |j| (possibly swapped).
-            //    sign(i)  sign(j)  operations
-            //     >= 0     >= 0     none
-            //     >= 0     < 0      swap + negate
-            //     < 0      >= 0     swap
-            //     < 0      < 0      negate
-
-            // Get absolute value and sign for each index.
-            let si = ((i as i32) >> 8) as u32;
-            let mut ui = ((i as u32) ^ (si as u32)).wrapping_sub(si);
-            let sj = ((j as i32) >> 8) as u32;
-            let mut uj = ((j as u32) ^ (sj as u32)).wrapping_sub(sj);
-
-            // Swap absolute values if the signs differ.
-            let do_swap = si ^ sj;
-            let t = do_swap & (ui ^ uj);
-            ui ^= t;
-            uj ^= t;
-
-            // Lookup the point.
-            // The two absolute values are at most 3 each, so the combined
-            // index cannot exceed 3.
-            let k = (ui >> 1) + (2 * (uj >> 1));
-            let v = GFb254::lookup4_x2_nocheck(&win, k);
-            let mut P = PointAffine { scaled_x: v[0], scaled_s: v[1] };
-
-            // Post-lookup adjustments.
-            P.set_condzeta(do_swap, neg);
-            P.set_condneg(sj);
-
-            P
-        }
-
-        // Recode the two half-width odd scalars into 64 digits each.
-        let sd0 = Self::recode2_u128_odd(n0);
-        let sd1 = Self::recode2_u128_odd(n1);
-
-        // Process the two digit sequences in high-to-low order.
-        let mut Q = Self::xdouble_affine_withb_c0(2, &lookup_2dt(&win, nz, sd0[63], sd1[63]));
-        for i in (1..63).rev() {
-            Q.set_add_xdouble_affine_withb_c0(2,
-                &lookup_2dt(&win, nz, sd0[i], sd1[i]));
-        }
-        Q.set_add_affine_withb_toJaco_c01(&lookup_2dt(&win, nz, sd0[0], sd1[0]));
-
-        let Qa = Q.to_affine_fromJaco();
-        let mut qq = [0u8; 64];
-        qq[..32].copy_from_slice(&Qa.scaled_x.encode());
-        qq[32..].copy_from_slice(&Qa.scaled_s.encode());
-        Some(qq)
-    }
-
-    /// This function is defined only for benchmarking purposes. It
-    /// implements a kind of ECDH key exchange, with the following
-    /// characteristics:
-    ///
-    ///  - Input point `pp` is a raw, uncompressed point (64 bytes).
-    ///  - Output is the resulting point, also uncompressed; no hashing
-    ///    is performed.
-    ///  - Scalar `sk` is provided encoded over 32 bytes.
-    ///  - Input point is not considered secret (only the scalar).
-    ///
-    /// For a proper key exchange, with compressed points and extra
-    /// hashing to get an unbiased output cryptographically bounded to
-    /// the source points, and constant-time processing so that even the
-    /// input point can be secret, use `PrivateKey::ECDH()`.
-    ///
-    /// This function uses a two-dimensional lookup table, and processes
-    /// scalar bits in groups of 2.
-    /// This function is an version of for_benchmarks_only_2dt_2.
-    #[cfg(feature = "gls254bench")]
-    pub fn for_benchmarks_only_AD_2dt_2_c1(pp: &[u8], sk: &[u8]) -> Option<[u8; 64]> {
-        // Decode the input point in scaled affine coordinates; fail if
-        // the decoding fails (invalid representation of field elements)
-        // or if the resulting point is not on the curve, or is not in
-        // the proper group (the points P+N, for P \in E[r]).
-
-        // x and s must decode as field elements.
-        if pp.len() != 64 {
-            return None;
-        }
-        let px = GFb254::decode(&pp[..32])?;
-        let ps = GFb254::decode(&pp[32..])?;
-
-        // Curve equation: s^2 + x*s = (x^2 + sqrt(a)*x + b)^2
-        // Our (x,s) values are scaled by 1/sqrt(b), so we must first
-        // "unscale" them.
-        let ux = px.mul_sb();
-        let us = ps.mul_sb();
-        // sqrt(a) = a + 1
-        let uv = (us + ux.square() + ux.mul_u1() + Self::B).square() + us*ux;
-        if uv.iszero() == 0 {
-            return None;
-        }
-
-        // Points P+N are the points with Tr(x) != Tr(a). We must use the
-        // unscaled x coordinate.
-        if ux.trace() != 0 {
-            return None;
-        }
-
-        let mut P = PointAffine { scaled_x: px, scaled_s: ps };
-        let n = Scalar::decode(sk)?;
-
-        // We follow here the "2DT" method described in:
-        //   https://eprint.iacr.org/2022/748
-        // It is slightly modified here, in the following ways:
-        //  - We use (x,s) coordinates and complete formulas, so we do
-        //    not have to make special provisions for a neutral input
-        //    or the last iteration; we simply do not have any exceptional
-        //    case to care about.
-        //  - The scalar splitting is a bit different; the split_mu_inner()
-        //    function returns the optimal solution (no off-by-1) and we
-        //    ensure odd integers in the output by simply modifying the
-        //    input scalar, and adjusting the result (see split_mu_odd()).
-
-        // Split the scalar into odd integers (128 bits + sign).
-        let (n0, s0, n1, s1) = Self::split_mu_odd(&n);
-
-        // The scalar n was split into n0 and n1, with n = n0 + n1*mu.
-        // We have abs(n0) and abs(n1) into the `n0` and `n1` variables;
-        // we will conditionally negatd the source operand point, and also
-        // the output of zeta(), so as to take into account the signs
-        // of n0 and n1, and avoid any further sign handling. Thus, we do
-        // the following:
-        //   If s0 < 0 then we negate the base point (self).
-        //   All applications of zeta really are zeta(nz), with nz = s0 XOR s1.
-        P.set_condneg(s0);
-        let nz = s0 ^ s1;
-
-        // Compute the 2D table:
-        //   P + zeta(P)
-        //   3*P + zeta(P)
-        //   P + zeta(3*P)
-        //   3*P + zeta(3*P)
-        // The values in the table should be (X, S, Z) instead of (X, S, Z, T)
-        // in order to reduce the computational cost associated with T.
-        // This is because T is not necessary when converting to affine:
-        //   iZ = 1/Z^2
-        //   X = T * iZ
-        //   S = S * iZ
-        // ->
-        //   iZ = 1/Z
-        //   X = X * iZ
-        //   S = S * iZ^2
-        // The application of zeta should be done after the conversion to affine 
-        // coordinates.
-        let zP = P.zeta(nz);
-        let P3 = Self::triple_affine(&P);
-        let Q0 = Self::add_affine_selfzeta_toJaco_c01(&P, nz);
-        let (Q1, Q2) = P3.add_sub_affine_toJaco_c01(&zP);
-        let mut Q3 = P3;
-        Q3.set_add_selfzeta_toJaco_c01(nz);
-
-        // Normalize the table to affine.
-        // Note:
-        //   Q0.Z and Q3.Z are in GF(2^127)
-        //   Q2.Z = phi(Q1.Z)  (add_sub_affine() + zeta() on Q2)
-        // The values in the table should be (X, S, Z) instead of (X, S, Z, T)
-        // in order to reduce the computational cost associated with T.
-        // This is because T is not necessary when converting to affine:
-        //   iZ = 1/Z^2
-        //   X = T * iZ
-        //   S = S * iZ
-        // ->
-        //   iZ = 1/Z
-        //   X = X * iZ
-        //   S = S * iZ^2
-        // The application of zeta should be done after the conversion to affine 
-        // coordinates.
-        // The computational cost is the same except for the operations involving 
-        // the T coordinate (i.e., X * Z).
-        let mut win = [GFb254::ZERO; 8];
-        let (q0z, _) = Q0.Z.to_components();
-        let (q3z, _) = Q3.Z.to_components();
-        let sav1 = q0z * q3z;
-        let mut z = Q1.Z.mul_b127(&sav1);
-        z.set_invert();
-        let iZ = z.mul_b127(&sav1);
-        let iZZ = iZ.square();
-        z *= Q1.Z;
-        win[2] = Q1.X * iZ;
-        win[3] = Q1.S * iZZ;
-        let mut Q2 = PointAffine { scaled_x: Q2.X * iZ, scaled_s: Q2.S * iZZ};
-        Q2.set_zeta(nz);
-        win[4] = Q2.scaled_x;
-        win[5] = Q2.scaled_s;
-        let (zf, _) = z.to_components();
-        let iz = zf * q0z;
-        let izz = iz.square();
-        win[6] = Q3.X.mul_b127(&iz);
-        win[7] = Q3.S.mul_b127(&izz);
-        let iz = zf * q3z;
-        let izz = iz.square();
-        win[0] = Q0.X.mul_b127(&iz);
-        win[1] = Q0.S.mul_b127(&izz);
-
-        // The window contains 4 points:
-        //   win[4*j + i] = (2*i+1)*P + (2*j+1)*zeta(P)
-        // (Each point is two coordinates: scaled affine representation.)
-        // In other words, win[] contains all points e*P + f*zeta(P) for
-        // e and f in {1, 3}.
-        //
-        // This function returns i*P + j*zeta(P) for i and j both in
-        // {-3, -1, +1, +3}. The sign adjustments leverage
-        // the fact that zeta^2 = -1, i.e.:
-        //   zeta(e*P + f*zeta(P)) = -f*P + e*zeta(P)
-        // If neg is 0xFFFFFFFF, then '-zeta' is used instead of 'zeta' in
-        // all of the above.
-        #[inline(always)]
-        fn lookup_2dt(win: &[GFb254; 8], neg: u32, i: i8, j: i8)
-            -> PointAffine
-        {
-            // We have two conditional operations:
-            //   swap: swap i and j (before the lookup), apply zeta on output
-            //   neg:  negate the output
-            // The lookup itself uses |i| and |j| (possibly swapped).
-            //    sign(i)  sign(j)  operations
-            //     >= 0     >= 0     none
-            //     >= 0     < 0      swap + negate
-            //     < 0      >= 0     swap
-            //     < 0      < 0      negate
-
-            // Get absolute value and sign for each index.
-            let si = ((i as i32) >> 8) as u32;
-            let mut ui = ((i as u32) ^ (si as u32)).wrapping_sub(si);
-            let sj = ((j as i32) >> 8) as u32;
-            let mut uj = ((j as u32) ^ (sj as u32)).wrapping_sub(sj);
-
-            // Swap absolute values if the signs differ.
-            let do_swap = si ^ sj;
-            let t = do_swap & (ui ^ uj);
-            ui ^= t;
-            uj ^= t;
-
-            // Lookup the point.
-            // The two absolute values are at most 3 each, so the combined
-            // index cannot exceed 3.
-            let k = (ui >> 1) + (2 * (uj >> 1));
-            let v = GFb254::lookup4_x2_nocheck(&win, k);
-            let mut P = PointAffine { scaled_x: v[0], scaled_s: v[1] };
-
-            // Post-lookup adjustments.
-            P.set_condzeta(do_swap, neg);
-            P.set_condneg(sj);
-
-            P
-        }
-
-        // Recode the two half-width odd scalars into 64 digits each.
-        let sd0 = Self::recode2_u128_odd(n0);
-        let sd1 = Self::recode2_u128_odd(n1);
-
-        // Process the two digit sequences in high-to-low order.
-        let mut Q = Self::xdouble_affine_withb_c1(2, &lookup_2dt(&win, nz, sd0[63], sd1[63]));
-        for i in (1..63).rev() {
-            Q.set_add_xdouble_affine_withb_c1(2,
-                &lookup_2dt(&win, nz, sd0[i], sd1[i]));
-        }
-        Q.set_add_affine_withb_toJaco_c01(&lookup_2dt(&win, nz, sd0[0], sd1[0]));
 
         let Qa = Q.to_affine_fromJaco();
         let mut qq = [0u8; 64];

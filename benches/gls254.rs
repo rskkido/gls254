@@ -573,76 +573,6 @@ fn bench_raw_ecdh_AD_2dt_3() -> (f64, u8) {
     ((tt[tt.len() >> 1] as f64) / 100.0, pp[0])
 }
 
-#[cfg(feature = "gls254bench")]
-fn bench_raw_ecdh_AD_2dt_2_c0() -> (f64, u8) {
-    let z = core_cycles();
-    let mut seed = [0u8; 32];
-    seed[ 0.. 8].copy_from_slice(&z.to_le_bytes());
-    seed[ 8..16].copy_from_slice(&z.to_le_bytes());
-    seed[16..24].copy_from_slice(&z.to_le_bytes());
-    seed[24..32].copy_from_slice(&z.to_le_bytes());
-    let mut sk = Scalar::decode_reduce(&seed).encode();
-    let mut pp: [u8; 64] = [
-        0x80, 0xAE, 0xB8, 0xED, 0x53, 0x59, 0xFF, 0x2D, 
-        0xD0, 0x77, 0x45, 0x61, 0xF9, 0x22, 0xE4, 0x63,
-        0x9C, 0xEE, 0x3A, 0xF1, 0xE8, 0xF7, 0x23, 0x80, 
-        0x74, 0x5A, 0x57, 0x29, 0xC5, 0xAA, 0xF5, 0x02,
-        0x3B, 0xBC, 0x79, 0x2E, 0x22, 0x13, 0x30, 0x15, 
-        0xAC, 0x13, 0xB0, 0xE1, 0x97, 0xC4, 0xB8, 0x6C,
-        0x1F, 0x74, 0xA3, 0x7B, 0x9A, 0xE9, 0xEB, 0x09, 
-        0xA8, 0x4A, 0x26, 0x5B, 0xCF, 0xC0, 0x5A, 0x1C,
-    ];
-    pp = Point::for_benchmarks_only_AD_2dt_2_c0(&pp, &sk).unwrap();
-    let mut tt = [0; 100];
-    for i in 0..tt.len() {
-        let begin = core_cycles();
-        for _ in 0..100 {
-            sk[..].copy_from_slice(&pp[..32]);
-            sk[31] &= 0x1F;
-            pp = Point::for_benchmarks_only_AD_2dt_2_c0(&pp, &sk).unwrap();
-        }
-        let end = core_cycles();
-        tt[i] = end.wrapping_sub(begin);
-    }
-    tt.sort();
-    ((tt[tt.len() >> 1] as f64) / 100.0, pp[0])
-}
-
-#[cfg(feature = "gls254bench")]
-fn bench_raw_ecdh_AD_2dt_2_c1() -> (f64, u8) {
-    let z = core_cycles();
-    let mut seed = [0u8; 32];
-    seed[ 0.. 8].copy_from_slice(&z.to_le_bytes());
-    seed[ 8..16].copy_from_slice(&z.to_le_bytes());
-    seed[16..24].copy_from_slice(&z.to_le_bytes());
-    seed[24..32].copy_from_slice(&z.to_le_bytes());
-    let mut sk = Scalar::decode_reduce(&seed).encode();
-    let mut pp: [u8; 64] = [
-        0x80, 0xAE, 0xB8, 0xED, 0x53, 0x59, 0xFF, 0x2D, 
-        0xD0, 0x77, 0x45, 0x61, 0xF9, 0x22, 0xE4, 0x63,
-        0x9C, 0xEE, 0x3A, 0xF1, 0xE8, 0xF7, 0x23, 0x80, 
-        0x74, 0x5A, 0x57, 0x29, 0xC5, 0xAA, 0xF5, 0x02,
-        0x3B, 0xBC, 0x79, 0x2E, 0x22, 0x13, 0x30, 0x15, 
-        0xAC, 0x13, 0xB0, 0xE1, 0x97, 0xC4, 0xB8, 0x6C,
-        0x1F, 0x74, 0xA3, 0x7B, 0x9A, 0xE9, 0xEB, 0x09, 
-        0xA8, 0x4A, 0x26, 0x5B, 0xCF, 0xC0, 0x5A, 0x1C,
-    ];
-    pp = Point::for_benchmarks_only_AD_2dt_2_c1(&pp, &sk).unwrap();
-    let mut tt = [0; 100];
-    for i in 0..tt.len() {
-        let begin = core_cycles();
-        for _ in 0..100 {
-            sk[..].copy_from_slice(&pp[..32]);
-            sk[31] &= 0x1F;
-            pp = Point::for_benchmarks_only_AD_2dt_2_c1(&pp, &sk).unwrap();
-        }
-        let end = core_cycles();
-        tt[i] = end.wrapping_sub(begin);
-    }
-    tt.sort();
-    ((tt[tt.len() >> 1] as f64) / 100.0, pp[0])
-}
-
 fn main() {
     let mut bx = 0u8;
 
@@ -682,12 +612,6 @@ fn main() {
         let (v, x) = bench_raw_ecdh_AD_2dt_3();
         bx ^= x;
         println!("GLS254 raw_ECDH AD-2DT-3:         {:13.2}", v);
-        let (v, x) = bench_raw_ecdh_AD_2dt_2_c0();
-        bx ^= x;
-        println!("GLS254 raw_ECDH AD-2DT-2-c0:         {:13.2}", v);
-        let (v, x) = bench_raw_ecdh_AD_2dt_2_c1();
-        bx ^= x;
-        println!("GLS254 raw_ECDH AD-2DT-2-c1:         {:13.2}", v);
     }
     let (v, x) = bench_mulgen();
     bx ^= x;
