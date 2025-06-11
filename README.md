@@ -1,1 +1,5 @@
-"# gls254" 
+This is an improved version of the gls254 module from the [crrl](https://github.com/pornin/crrl) library.
+
+The following files have been updated from crrl version 0.9.0:
+- gls254.rs
+- bench/gls254.rs
