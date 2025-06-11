@@ -597,7 +597,7 @@ fn main() {
         bx ^= x;
         println!("GLS254 raw_ECDH 2DT-3:         {:13.2}", v);
 
-        let (v, x) = bench_raw_ecdh_AD_1dt_3();
+        let (v, x) = bench_raw_ecdh_AD_1dt_3(); 
         bx ^= x;
         println!("GLS254 raw_ECDH AD-1DT-3:         {:13.2}", v);
         let (v, x) = bench_raw_ecdh_AD_1dt_4();

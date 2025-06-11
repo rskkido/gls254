@@ -4188,7 +4188,7 @@ impl Point {
     #[inline(always)]
     pub fn mulgen(n: &Scalar) -> Self {
         let mut P = Self::NEUTRAL;
-        P.set_mulgen(n);
+        P.set_mulgen(n); 
         P
     }
 
